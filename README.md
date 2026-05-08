@@ -1,4 +1,4 @@
-# Fraud Detection Service – IVF-Based Vector Search
+# IVF-Based Vector Search
 
 This project implements a fraud scoring service using an **Inverted File Index (IVF)** with 16‑dimensional quantized vectors.  
 It receives a transaction JSON via HTTP, transforms it into a feature vector, searches the nearest neighbours in the pre‑built index, and returns an approval decision along with a fraud score.
