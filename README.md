@@ -8,7 +8,7 @@ It receives a transaction JSON via HTTP, transforms it into a feature vector, se
 Before starting the server, you must build the IVF index from a training dataset.  
 The index builder expects a JSON file with the following format:
 
-```json
+```
 [
   {
     "vector": [0.123, 0.456, ... , 0.789],   // 16 elements, each in [0,1] or -1.0 for missing
