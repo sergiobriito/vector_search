@@ -99,6 +99,7 @@ int main(int argc, char* argv[]) {
   };
 
   VectorSearch vector_search;
+  vector_search.load_index();
 
   crow::SimpleApp app;
 
@@ -116,7 +117,7 @@ int main(int argc, char* argv[]) {
             return crow::response{response};
           });
 
-  app.port(9999).concurrency(1).run();
+  app.port(8080).multithreaded().run();
 
   return 0;
 };
