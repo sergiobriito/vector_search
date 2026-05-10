@@ -17,13 +17,12 @@
 
 using namespace std;
 
-vector<pair<float, bool>> IVF::search(const vector<int16_t>& query, int top_k,
-                                      int nprobe) {
+vector<pair<int32_t, uint32_t>> IVF::search(const vector<int16_t>& query,
+                                            int top_k) {
   const int16_t* q_ptr = query.data();
   __m256i v_query = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(q_ptr));
 
-  priority_queue<pair<int32_t, int>> closest_centroids;
-
+  vector<pair<int32_t, int>> centroid_dists(k);
   for (int c = 0; c < k; c++) {
     __m256i v_cent = _mm256_loadu_si256(
         reinterpret_cast<const __m256i*>(&centroids[c * 16]));
@@ -34,57 +33,76 @@ vector<pair<float, bool>> IVF::search(const vector<int16_t>& query, int top_k,
     __m128i sum = _mm_add_epi32(hi, lo);
     sum = _mm_add_epi32(sum, _mm_shuffle_epi32(sum, _MM_SHUFFLE(1, 0, 3, 2)));
     sum = _mm_add_epi32(sum, _mm_shuffle_epi32(sum, _MM_SHUFFLE(2, 3, 0, 1)));
-    int32_t d = _mm_cvtsi128_si32(sum);
-
-    if (closest_centroids.size() < (size_t)nprobe) {
-      closest_centroids.push({d, c});
-    } else if (d < closest_centroids.top().first) {
-      closest_centroids.pop();
-      closest_centroids.push({d, c});
-    }
+    centroid_dists[c] = {_mm_cvtsi128_si32(sum), c};
   }
 
-  vector<pair<int32_t, bool>> top_results;
+  int actual_nprobe = min(nprobe, k);
+  partial_sort(centroid_dists.begin(), centroid_dists.begin() + actual_nprobe,
+               centroid_dists.end(),
+               [](const auto& a, const auto& b) { return a.first < b.first; });
 
-  auto update_topk = [&](int32_t dist, bool label) {
-    if (top_results.size() < (size_t)top_k) {
-      top_results.push_back({dist, label});
-      push_heap(top_results.begin(), top_results.end());
-    } else if (dist < top_results.front().first) {
-      pop_heap(top_results.begin(), top_results.end());
-      top_results.back() = {dist, label};
-      push_heap(top_results.begin(), top_results.end());
+  vector<pair<int32_t, uint32_t>> top_results(top_k);
+  int current_results = 0;
+
+  auto update_topk = [&](int32_t dist, uint32_t id) {
+    if (current_results == top_k && dist >= top_results[top_k - 1].first) {
+      return;
+    }
+
+    int i = current_results - 1;
+    if (current_results < top_k) current_results++;
+
+    while (i >= 0 && top_results[i].first > dist) {
+      if (i + 1 < top_k) {
+        top_results[i + 1] = top_results[i];
+      }
+      i--;
+    }
+    if (i + 1 < top_k) {
+      top_results[i + 1] = {dist, id};
     }
   };
 
-  while (!closest_centroids.empty()) {
-    int best_c = closest_centroids.top().second;
-    closest_centroids.pop();
+  for (int i = 0; i < actual_nprobe; ++i) {
+    int best_c = centroid_dists[i].second;
 
     int start = bucket_starts[best_c];
     int end = bucket_starts[best_c + 1];
 
     int j = start;
-    for (; j + 7 < end; j += 8) {
-      _mm_prefetch(reinterpret_cast<const char*>(&all_vectors[(j + 8) * 16]),
+
+    for (; j + 3 < end; j += 4) {
+      _mm_prefetch(reinterpret_cast<const char*>(&all_vectors[(j + 4) * 16]),
                    _MM_HINT_T0);
 
-      auto get_dist = [&](int offset) -> int32_t {
-        __m256i v = _mm256_loadu_si256(
-            reinterpret_cast<const __m256i*>(&all_vectors[(j + offset) * 16]));
-        __m256i diff = _mm256_sub_epi16(v_query, v);
-        __m256i dot = _mm256_madd_epi16(diff, diff);
-        __m128i hi = _mm256_extracti128_si256(dot, 1);
-        __m128i lo = _mm256_castsi256_si128(dot);
-        __m128i sum = _mm_add_epi32(hi, lo);
-        sum =
-            _mm_add_epi32(sum, _mm_shuffle_epi32(sum, _MM_SHUFFLE(1, 0, 3, 2)));
-        sum =
-            _mm_add_epi32(sum, _mm_shuffle_epi32(sum, _MM_SHUFFLE(2, 3, 0, 1)));
-        return _mm_cvtsi128_si32(sum);
-      };
+      __m256i v0 = _mm256_loadu_si256(
+          reinterpret_cast<const __m256i*>(&all_vectors[(j + 0) * 16]));
+      __m256i v1 = _mm256_loadu_si256(
+          reinterpret_cast<const __m256i*>(&all_vectors[(j + 1) * 16]));
+      __m256i v2 = _mm256_loadu_si256(
+          reinterpret_cast<const __m256i*>(&all_vectors[(j + 2) * 16]));
+      __m256i v3 = _mm256_loadu_si256(
+          reinterpret_cast<const __m256i*>(&all_vectors[(j + 3) * 16]));
 
-      for (int i = 0; i < 8; ++i) update_topk(get_dist(i), labels[j + i]);
+      __m256i diff0 = _mm256_sub_epi16(v_query, v0);
+      __m256i diff1 = _mm256_sub_epi16(v_query, v1);
+      __m256i diff2 = _mm256_sub_epi16(v_query, v2);
+      __m256i diff3 = _mm256_sub_epi16(v_query, v3);
+      __m256i dot0 = _mm256_madd_epi16(diff0, diff0);
+      __m256i dot1 = _mm256_madd_epi16(diff1, diff1);
+      __m256i dot2 = _mm256_madd_epi16(diff2, diff2);
+      __m256i dot3 = _mm256_madd_epi16(diff3, diff3);
+      __m256i sum01 = _mm256_hadd_epi32(dot0, dot1);
+      __m256i sum23 = _mm256_hadd_epi32(dot2, dot3);
+      __m256i sum0123 = _mm256_hadd_epi32(sum01, sum23);
+      __m128i lo = _mm256_castsi256_si128(sum0123);
+      __m128i hi = _mm256_extracti128_si256(sum0123, 1);
+      __m128i final_sums = _mm_add_epi32(lo, hi);
+
+      update_topk(_mm_extract_epi32(final_sums, 0), labels[j + 0]);
+      update_topk(_mm_extract_epi32(final_sums, 1), labels[j + 1]);
+      update_topk(_mm_extract_epi32(final_sums, 2), labels[j + 2]);
+      update_topk(_mm_extract_epi32(final_sums, 3), labels[j + 3]);
     }
 
     for (; j < end; ++j) {
@@ -94,12 +112,8 @@ vector<pair<float, bool>> IVF::search(const vector<int16_t>& query, int top_k,
     }
   }
 
-  sort_heap(top_results.begin(), top_results.end());
-  vector<pair<float, bool>> res;
-  for (auto& p : top_results) {
-    res.emplace_back(static_cast<float>(p.first) * 1e-8f, p.second);
-  }
-  return res;
+  top_results.resize(current_results);
+  return top_results;
 }
 
 void IVF::build_index(const vector<int16_t>& data, const vector<uint8_t>& lbls,
@@ -109,7 +123,7 @@ void IVF::build_index(const vector<int16_t>& data, const vector<uint8_t>& lbls,
 
   vector<vector<size_t>> buckets(k);
   for (size_t i = 0; i < n; i++) {
-    float min_dist = 1e30f;
+    int32_t min_dist = INT32_MAX;
     int best_cluster = 0;
     const int16_t* v_ptr = &data[i * 16];
     for (int c = 0; c < k; c++) {
@@ -206,13 +220,13 @@ void IVF::k_means(const vector<int16_t>& data) {
   }
 
   for (int iter = 0; iter < max_iters; iter++) {
-    vector<vector<float>> acc(k, vector<float>(16, 0.0f));
+    vector<float> acc(k * 16, 0.0f);
     vector<int> counts(k, 0);
 
     for (int i = 0; i < sample_size && (i * train_stride) < n_total; ++i) {
       const int16_t* v = &data[(i * train_stride) * 16];
       int best_c = 0;
-      float min_d = numeric_limits<float>::max();
+      int32_t min_d = INT32_MAX;
       for (int c = 0; c < k; ++c) {
         int32_t d = euclidean_distance(v, &centroids[c * 16]);
         if (d < min_d) {
@@ -220,7 +234,7 @@ void IVF::k_means(const vector<int16_t>& data) {
           best_c = c;
         }
       }
-      for (size_t d = 0; d < 16; ++d) acc[best_c][d] += v[d];
+      for (size_t d = 0; d < 16; ++d) acc[best_c * 16 + d] += v[d];
       counts[best_c]++;
     }
 
@@ -228,7 +242,7 @@ void IVF::k_means(const vector<int16_t>& data) {
       if (counts[c] > 0) {
         for (size_t d = 0; d < 16; ++d) {
           centroids[c * 16 + d] =
-              static_cast<int16_t>(std::round(acc[c][d] / counts[c]));
+              static_cast<int16_t>(std::round(acc[c * 16 + d] / counts[c]));
         }
       }
     }
@@ -285,4 +299,9 @@ void IVF::load_index_from_binary() {
   file.read((char*)centroids.data(), s_centroids * 2);
   bucket_starts.resize(s_buckets);
   file.read((char*)bucket_starts.data(), s_buckets * 4);
+
+  k = static_cast<int>(centroids.size() / 16);
+  if (static_cast<size_t>(k + 1) != bucket_starts.size()) {
+    bucket_starts.resize(k + 1);
+  }
 }

@@ -146,7 +146,7 @@ vector<int16_t> VectorSearch::transaction_to_vector(
   return vec;
 }
 
-float VectorSearch::compute_score(vector<pair<float, bool>>& weights) {
+float VectorSearch::compute_score(vector<pair<int32_t, uint32_t>>& weights) {
   int t = 0;
   for (auto& [dist, is_fraud] : weights) {
     if (is_fraud) t++;
@@ -154,14 +154,14 @@ float VectorSearch::compute_score(vector<pair<float, bool>>& weights) {
   return static_cast<float>(t) / weights.size();
 }
 
-vector<pair<float, bool>> VectorSearch::search_neighbors(
-    const vector<int16_t>& vec, int top_k, int nprobe) {
-  return ivf.search(vec, top_k, nprobe);
+vector<pair<int32_t, uint32_t>> VectorSearch::search_neighbors(
+    const vector<int16_t>& vec, int top_k) {
+  return ivf.search(vec, top_k);
 }
 
 pair<bool, float> VectorSearch::is_approved(const crow::json::rvalue& j) {
   vector<int16_t> vec = transaction_to_vector(j);
-  vector<pair<float, bool>> weights = search_neighbors(vec, 5, 23);
+  vector<pair<int32_t, uint32_t>> weights = search_neighbors(vec, 5);
   float score = compute_score(weights);
   return {score < threshold, score};
 }

@@ -16,8 +16,9 @@ class IVF {
   vector<int> bucket_starts;
 
   int k = 1024;
-  int sample_size = 3000000;
-  int max_iters = 20;
+  int sample_size = 500000;
+  int max_iters = 100;
+  int nprobe = 1;
 
   string index_filename = "index.bin";
 
@@ -26,8 +27,8 @@ class IVF {
     bucket_starts.resize(k + 1, 0);
   }
 
-  vector<pair<float, bool>> search(const vector<int16_t>& query, int top_k,
-                                   int nprobe);
+  vector<pair<int32_t, uint32_t>> search(const vector<int16_t>& query,
+                                         int top_k);
 
   void build_index(const vector<int16_t>& data, const vector<uint8_t>& lbls,
                    const vector<uint32_t>& ids);

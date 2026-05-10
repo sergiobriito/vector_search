@@ -16,7 +16,7 @@ class VectorSearch {
   float threshold = 0.6f;
   size_t dimensions = 16;
 
-  float mcc_risk_array[10000] = {0.5f};
+  float mcc_risk_array[10000];
   static constexpr int max_amount = 10000;
   static constexpr int max_installments = 12;
   static constexpr int amount_vs_avg_ratio = 10;
@@ -25,10 +25,7 @@ class VectorSearch {
   static constexpr int max_tx_count_24h = 20;
   static constexpr int max_merchant_avg_amount = 10000;
 
-  VectorSearch() {
-    fill_mcc_risk_array();
-    load_index();
-  };
+  VectorSearch() { fill_mcc_risk_array(); };
 
   void load_index() {
     ivf = IVF();
@@ -51,16 +48,14 @@ class VectorSearch {
 
   vector<int16_t> transaction_to_vector(const crow::json::rvalue& j);
 
-  float compute_score(vector<pair<float, bool>>& weights);
+  float compute_score(vector<pair<int32_t, uint32_t>>& weights);
 
-  vector<pair<float, bool>> search_neighbors(const vector<int16_t>& vec,
-                                             int top_k, int nprobe);
+  vector<pair<int32_t, uint32_t>> search_neighbors(const vector<int16_t>& vec,
+                                                   int top_k);
 
   pair<bool, float> is_approved(const crow::json::rvalue& j);
 
   void create_ivf(const string& filename);
-
-  time_t get_time(const string& s);
 };
 
 #endif
