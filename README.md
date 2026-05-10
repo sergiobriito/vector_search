@@ -1,46 +1,88 @@
-# IVF-Based Vector Search
+# Vector Search Fraud Scoring Service
 
-This project implements a fraud scoring service using an **Inverted File Index (IVF)** with 16‑dimensional quantized vectors.  
-It receives a transaction JSON via HTTP, transforms it into a feature vector, searches the nearest neighbours in the pre‑built index, and returns an approval decision along with a fraud score.
+A fraud scoring service built on a Inverted File Index (IVF).
+
+The service:
+- converts transaction JSON into a quantized 16-dimensional feature vector
+- searches the nearest neighbors in a pre-built IVF index
+- computes a fraud score from the neighbor labels
+- returns a approval decision and a fraud score
+
+---
+
+## Features
+
+- IVF index with k-means centroid clustering
+- SIMD-accelerated distance search with AVX2
+- HTTP API using Crow
+- optional Nginx load balancer via `docker-compose`
+
+---
+
+## Build and Run Locally
+
+### Build
+
+```bash
+make build
+```
+
+### Run the API server
+
+```bash
+make run
+```
+
+This starts the service on port `8080`.
+
+### Health check
+
+```bash
+curl http://127.0.0.1:8080/ready
+```
+
+Expected response:
+
+```text
+ready
+```
+
+### Query the fraud API
+
+```bash
+curl -X POST http://127.0.0.1:8080/fraud-score \
+  -H "Content-Type: application/json" \
+  -d @sample-request.json
+```
+
+---
 
 ## Index Preparation
 
-Before starting the server, you must build the IVF index from a training dataset.  
-The index builder expects a JSON file with the following format:
+The service loads `index.bin` from disk when it starts.
 
-```
-[
-  {
-    "vector": [0.123, 0.456, ... , 0.789],   // 16 elements, each in [0,1] or -1.0 for missing
-    "label": "fraud" | "legit"
-  },
-  ...
-]
-```
-
-To create the index, call `VectorSearch::create_ivf("references.json")` once.  
-The resulting binary index (`index.bin`) will be loaded automatically on server startup.
-
-## Running the Server
+To build the index from a JSON reference dataset:
 
 ```bash
-./fraud_server
+make build_index
 ```
 
-The server listens on `http://0.0.0.0:9999`.
+This runs `./main build_index` and expects `references.json` to exist in the repository root.
+---
 
-### Endpoints
+## API Reference
 
-| Method | Path           | Description                          |
-|--------|----------------|--------------------------------------|
-| GET    | `/ready`       | Returns `"ready"` (health check)     |
-| POST   | `/fraud-score` | Accepts transaction JSON, returns approval decision and fraud score. |
+### `GET /ready`
 
-## API Usage
+Health check endpoint. Returns plain text `ready`.
 
-### Request (`/fraud-score`)
+### `POST /fraud-score`
 
-**Required fields**:
+Processes a transaction request and returns an approval decision and fraud score.
+
+#### Request body
+
+Example request:
 
 ```json
 {
@@ -71,7 +113,7 @@ The server listens on `http://0.0.0.0:9999`.
 }
 ```
 
-### Response
+#### Example response
 
 ```json
 {
@@ -79,3 +121,26 @@ The server listens on `http://0.0.0.0:9999`.
   "fraud_score": 0.2
 }
 ```
+
+---
+
+## Testing and Benchmarking
+
+The repository includes sample test data at `test-data.json`.
+
+Run the built-in test harness with:
+
+```bash
+make run_test
+```
+
+This verifies output against expected approvals and fraud scores.
+
+---
+
+## Requirements
+
+- C++17 compiler with AVX2 support
+- GNU Make
+- Linux environment
+
