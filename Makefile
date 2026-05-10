@@ -1,13 +1,11 @@
 CXX = g++
-CXXFLAGS = -Iinclude -std=c++17 -Wall -O3 -march=native -mavx2 -fopenmp -ffast-math -pthread 
-LDLIBS = -lws2_32 -lmswsock -liphlpapi
+CXXFLAGS = -Iinclude -std=c++17 -Wall -O3 -march=native -mavx2 -fopenmp -ffast-math -pthread
 
 SOURCES = $(wildcard src/*.cpp)
 
 build: $(SOURCES)
-	$(CXX) $(CXXFLAGS) $(SOURCES) -o main $(LDLIBS)
+	$(CXX) $(CXXFLAGS) $(SOURCES) -o main
 
-	
 build_index: build
 	./main build_index
 

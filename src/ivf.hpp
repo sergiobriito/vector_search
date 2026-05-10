@@ -15,9 +15,9 @@ class IVF {
   vector<int16_t> centroids;
   vector<int> bucket_starts;
 
-  int k = 1024;
+  int k = 8192;
   int sample_size = 500000;
-  int max_iters = 100;
+  int max_iters = 25;
   int nprobe = 1;
 
   string index_filename = "index.bin";
