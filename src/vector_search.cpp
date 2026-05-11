@@ -1,12 +1,13 @@
 #include "vector_search.hpp"
 
+#include <simdjson.h>
+
 #include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <nlohmann/json.hpp>
 #include <sstream>
 #include <unordered_map>
 #include <vector>
@@ -124,36 +125,70 @@ pair<bool, float> VectorSearch::is_approved(const ParsedRequest& req) {
 }
 
 void VectorSearch::create_ivf(const string& filename) {
-  ifstream file(filename);
-  if (!file.is_open()) {
+  simdjson::padded_string json_str;
+  if (simdjson::padded_string::load(filename).get(json_str) !=
+      simdjson::SUCCESS) {
     return;
   }
 
-  nlohmann::json j = nlohmann::json::parse(file);
+  simdjson::ondemand::parser parser;
+  auto doc = parser.iterate(json_str);
 
-  size_t total_vectors = j.size();
+  auto j = doc.get_array();
+
+  size_t total_vectors = 0;
+  for (auto _ : j) {
+    total_vectors++;
+  }
+
+  doc = parser.iterate(json_str);
+  j = doc.get_array();
+
   vector<int16_t> all_vectors(total_vectors * dimensions);
   vector<uint8_t> labels(total_vectors);
   vector<uint32_t> vector_ids(total_vectors);
 
-  for (size_t i = 0; i < total_vectors; i++) {
-    const auto& vec = j[i]["vector"];
-    for (size_t d = 0; d < dimensions; d++) {
+  size_t i = 0;
+  for (auto elem : j) {
+    auto vec = elem["vector"];
+
+    size_t d = 0;
+    for (auto val_elem : vec) {
+      if (d >= dimensions) break;
+
       if (d < 14) {
-        float val = vec[d].get<float>();
-        if (val == -1.0f) {
+        double val;
+        if (val_elem.get_double().get(val) != simdjson::SUCCESS) {
+          val = 0.0;
+        }
+
+        if (val == -1.0) {
           all_vectors[i * dimensions + d] = -10000;
         } else {
-          val = (val < 0.0f) ? 0.0f : (val > 1.0f ? 1.0f : val);
+          val = (val < 0.0) ? 0.0 : (val > 1.0 ? 1.0 : val);
           all_vectors[i * dimensions + d] =
-              static_cast<int16_t>(lrintf(val * 10000.0f));
+              static_cast<int16_t>(lrint(val * 10000.0));
         }
       } else {
         all_vectors[i * dimensions + d] = 0;
       }
+      d++;
     }
-    labels[i] = (j[i]["label"] == "fraud") ? 1 : 0;
-    vector_ids[i] = (uint32_t)i;
+
+    while (d < dimensions) {
+      all_vectors[i * dimensions + d] = 0;
+      d++;
+    }
+
+    string_view label_str;
+    if (elem["label"].get_string().get(label_str) == simdjson::SUCCESS) {
+      labels[i] = (label_str == "fraud") ? 1 : 0;
+    } else {
+      labels[i] = 0;
+    }
+
+    vector_ids[i] = static_cast<uint32_t>(i);
+    i++;
   }
 
   ivf.build_index(all_vectors, labels, vector_ids);

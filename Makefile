@@ -1,39 +1,37 @@
 CXX = g++
 
 CXXFLAGS = -Iinclude \
-	-std=c++17 \
-	-Wall \
-	-O3 \
-	-march=native \
-	-mavx2 \
-	-fopenmp \
-	-ffast-math \
-	-pthread \
-	-DJSON_USE_LEGACY_STRTOLL \
+        -std=c++17 \
+        -Wall \
+        -O3 \
+        -march=native \
+        -mavx2 \
+        -fopenmp \
+        -ffast-math \
+        -pthread \
+        -DJSON_USE_LEGACY_STRTOLL
 
 LDFLAGS = \
-	-fopenmp \
-	 \
-	lib/libuWS.a \
-	lib/libuSockets.a \
-	-lssl \
-	-lcrypto \
-	-lz \
-	-lpthread
+        -fopenmp \
+        -lssl \
+        -lcrypto \
+        -lz \
+        -lpthread
 
-SOURCES = $(wildcard src/*.cpp)
+SRCS = src/ivf.cpp \
+       src/utils.cpp \
+       src/vector_search.cpp \
+       src/main_local.cpp \
+       include/simdjson.cpp
 
 build:
-	$(CXX) $(CXXFLAGS) src/*.cpp -o main $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) $(SRCS) -o main $(LDFLAGS)
 
 build_index: build
 	./main build_index
 
 run: build
 	./main
-
-run_test: build
-	./main run_test
 
 clean:
 	rm -f main *.o src/*.o

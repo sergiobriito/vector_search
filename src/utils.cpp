@@ -1,67 +1,62 @@
 #include "utils.hpp"
 
+#include <simdjson.h>
+
 #include <cstring>
-#include <nlohmann/json.hpp>
 #include <string>
+
+static thread_local simdjson::ondemand::parser parser;
 
 ParsedRequest parse_request(string_view body) {
   ParsedRequest result{};
-  result.valid = true;
 
   try {
-    nlohmann::json j = nlohmann::json::parse(body);
+    simdjson::padded_string padded(body.data(), body.size());
+    auto doc = parser.iterate(padded);
 
-    if (j.contains("transaction")) {
-      auto& tx = j["transaction"];
-      if (tx.contains("amount")) result.amount = tx["amount"].get<double>();
-      if (tx.contains("installments"))
-        result.installments = tx["installments"].get<int>();
-      if (tx.contains("requested_at"))
-        result.requested_at = tx["requested_at"].get<string>();
+    auto tx = doc["transaction"];
+    tx["amount"].get_double().get(result.amount);
+    std::string_view sv;
+    if (tx["requested_at"].get_string().get(sv) == simdjson::SUCCESS)
+      result.requested_at = std::string(sv);
+    int64_t installments = 0;
+    tx["installments"].get_int64().get(installments);
+    result.installments = static_cast<int>(installments);
+
+    auto cust = doc["customer"];
+    cust["avg_amount"].get_double().get(result.avg_amount);
+    int64_t tx_count = 0;
+    cust["tx_count_24h"].get_int64().get(tx_count);
+    result.tx_count_24h = static_cast<int>(tx_count);
+    for (auto m : cust["known_merchants"]) {
+      std::string_view s;
+      if (m.get_string().get(s) == simdjson::SUCCESS)
+        result.known_merchants.emplace_back(s);
     }
 
-    if (j.contains("customer")) {
-      auto& cust = j["customer"];
-      if (cust.contains("avg_amount"))
-        result.avg_amount = cust["avg_amount"].get<double>();
-      if (cust.contains("tx_count_24h"))
-        result.tx_count_24h = cust["tx_count_24h"].get<int>();
-      if (cust.contains("known_merchants")) {
-        for (auto& m : cust["known_merchants"])
-          result.known_merchants.push_back(m.get<string>());
-      }
-    }
+    auto merch = doc["merchant"];
+    if (merch["id"].get_string().get(sv) == simdjson::SUCCESS)
+      result.merchant_id = std::string(sv);
+    if (merch["mcc"].get_string().get(sv) == simdjson::SUCCESS)
+      result.mcc_str = std::string(sv);
+    merch["avg_amount"].get_double().get(result.merchant_avg);
 
-    if (j.contains("merchant")) {
-      auto& merch = j["merchant"];
-      if (merch.contains("id"))
-        result.merchant_id = merch["id"].get<string>();
-      if (merch.contains("mcc"))
-        result.mcc_str = merch["mcc"].get<string>();
-      if (merch.contains("avg_amount"))
-        result.merchant_avg = merch["avg_amount"].get<double>();
-    }
+    auto term = doc["terminal"];
+    term["is_online"].get_bool().get(result.is_online);
+    term["card_present"].get_bool().get(result.card_present);
+    term["km_from_home"].get_double().get(result.km_from_home);
 
-    if (j.contains("terminal")) {
-      auto& term = j["terminal"];
-      if (term.contains("is_online"))
-        result.is_online = term["is_online"].get<bool>();
-      if (term.contains("card_present"))
-        result.card_present = term["card_present"].get<bool>();
-      if (term.contains("km_from_home"))
-        result.km_from_home = term["km_from_home"].get<double>();
-    }
-
-    if (j.contains("last_transaction") && !j["last_transaction"].is_null()) {
-      auto& last = j["last_transaction"];
+    auto last = doc["last_transaction"];
+    bool is_null = false;
+    if (last.is_null().get(is_null) == simdjson::SUCCESS && !is_null) {
       result.has_last_tx = true;
-      if (last.contains("timestamp"))
-        result.timestamp = last["timestamp"].get<string>();
-      if (last.contains("km_from_current"))
-        result.km_from_current = last["km_from_current"].get<double>();
+      if (last["timestamp"].get_string().get(sv) == simdjson::SUCCESS)
+        result.timestamp = std::string(sv);
+      last["km_from_current"].get_double().get(result.km_from_current);
     }
 
-  } catch (const exception& e) {
+    result.valid = true;
+  } catch (...) {
     result.valid = false;
   }
 
