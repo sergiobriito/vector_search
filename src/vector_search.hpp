@@ -5,8 +5,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "crow.h"
 #include "ivf.hpp"
+#include "utils.hpp"
 
 using namespace std;
 
@@ -46,14 +46,14 @@ class VectorSearch {
     mcc_risk_array[5999] = 0.50f;
   }
 
-  vector<int16_t> transaction_to_vector(const crow::json::rvalue& j);
+  vector<int16_t> transaction_to_vector(const ParsedRequest& req);
 
   float compute_score(vector<pair<int32_t, uint32_t>>& weights);
 
   vector<pair<int32_t, uint32_t>> search_neighbors(const vector<int16_t>& vec,
                                                    int top_k);
 
-  pair<bool, float> is_approved(const crow::json::rvalue& j);
+  pair<bool, float> is_approved(const ParsedRequest& req);
 
   void create_ivf(const string& filename);
 };

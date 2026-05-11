@@ -157,7 +157,7 @@ void IVF::build_index(const vector<int16_t>& data, const vector<uint8_t>& lbls,
 
 void IVF::k_means(const vector<int16_t>& data) {
   size_t n_total = data.size() / 16;
-  size_t train_stride = std::max<size_t>(1, n_total / sample_size);
+  size_t train_stride = max<size_t>(1, n_total / sample_size);
 
   vector<size_t> sample_indices;
   for (int i = 0; i < sample_size && (i * train_stride) < n_total; ++i) {
@@ -242,7 +242,7 @@ void IVF::k_means(const vector<int16_t>& data) {
       if (counts[c] > 0) {
         for (size_t d = 0; d < 16; ++d) {
           centroids[c * 16 + d] =
-              static_cast<int16_t>(std::round(acc[c * 16 + d] / counts[c]));
+              static_cast<int16_t>(round(acc[c * 16 + d] / counts[c]));
         }
       }
     }

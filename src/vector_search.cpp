@@ -11,41 +11,9 @@
 #include <unordered_map>
 #include <vector>
 
-struct ParsedDateTime {
-  time_t unix_time;
-  struct tm tm;
-};
+#include "utils.hpp"
 
-ParsedDateTime parse_datetime(const string& s) {
-  ParsedDateTime result;
-
-  int year = (s[0] - '0') * 1000 + (s[1] - '0') * 100 + (s[2] - '0') * 10 +
-             (s[3] - '0');
-  int mon = (s[5] - '0') * 10 + (s[6] - '0');
-  int day = (s[8] - '0') * 10 + (s[9] - '0');
-  int hour = (s[11] - '0') * 10 + (s[12] - '0');
-  int min = (s[14] - '0') * 10 + (s[15] - '0');
-  int sec = (s[17] - '0') * 10 + (s[18] - '0');
-
-  result.tm.tm_year = year - 1900;
-  result.tm.tm_mon = mon - 1;
-  result.tm.tm_mday = day;
-  result.tm.tm_hour = hour;
-  result.tm.tm_min = min;
-  result.tm.tm_sec = sec;
-  result.tm.tm_isdst = -1;
-
-#ifdef _WIN32
-  result.unix_time = _mkgmtime(&result.tm);
-#else
-  result.unix_time = timegm(&result.tm);
-#endif
-
-  return result;
-}
-
-vector<int16_t> VectorSearch::transaction_to_vector(
-    const crow::json::rvalue& j) {
+vector<int16_t> VectorSearch::transaction_to_vector(const ParsedRequest& req) {
   vector<int16_t> vec(dimensions, 0);
   constexpr float scale = 10000.0f;
 
@@ -64,21 +32,20 @@ vector<int16_t> VectorSearch::transaction_to_vector(
     return (int16_t)lrintf(val * scale);
   };
 
-  float amount = j["transaction"]["amount"].d();
+  float amount = req.amount;
   float norm_amount = amount * inv_max_amount;
   vec[0] = quantize(norm_amount);
 
-  int installments = j["transaction"]["installments"].d();
+  int installments = req.installments;
   float norm_inst = installments * inv_max_installments;
   vec[1] = quantize(norm_inst);
 
-  float avg_amount = j["customer"]["avg_amount"].d();
+  float avg_amount = req.avg_amount;
   float ratio = amount / avg_amount;
   float norm_ratio = ratio * inv_amount_vs_avg_ratio;
   vec[2] = quantize(norm_ratio);
 
-  const string& ts_str = j["transaction"]["requested_at"].s();
-
+  const string& ts_str = req.requested_at;
   ParsedDateTime dt = parse_datetime(ts_str);
   int hour = dt.tm.tm_hour;
   float norm_hour = hour * inv_max_hour;
@@ -90,43 +57,33 @@ vector<int16_t> VectorSearch::transaction_to_vector(
 
   time_t unix_time = dt.unix_time;
 
-  if (j.has("last_transaction") &&
-      j["last_transaction"].t() == crow::json::type::Object) {
-    auto last_tx = j["last_transaction"];
-    if (last_tx.has("timestamp") && last_tx.has("km_from_current")) {
-      string last_ts = last_tx["timestamp"].s();
-      ParsedDateTime last_dt = parse_datetime(last_ts);
-      float minutes = (unix_time - last_dt.unix_time) / 60.0f;
-      vec[5] = quantize(minutes * inv_max_minutes);
+  if (req.has_last_tx) {
+    ParsedDateTime last_dt = parse_datetime(req.timestamp);
+    float minutes = (unix_time - last_dt.unix_time) / 60.0f;
+    vec[5] = quantize(minutes * inv_max_minutes);
 
-      float km_last = last_tx["km_from_current"].d();
-      vec[6] = quantize(km_last * inv_max_km);
-    } else {
-      vec[5] = -10000;
-      vec[6] = -10000;
-    }
+    float km_last = req.km_from_current;
+    vec[6] = quantize(km_last * inv_max_km);
   } else {
     vec[5] = -10000;
     vec[6] = -10000;
   }
 
-  float km_home = j["terminal"]["km_from_home"].d();
+  float km_home = req.km_from_home;
   vec[7] = quantize(km_home * inv_max_km);
 
-  int tx_count = j["customer"]["tx_count_24h"].d();
+  int tx_count = req.tx_count_24h;
   vec[8] = quantize(tx_count * inv_max_tx_count);
 
-  vec[9] = quantize(j["terminal"]["is_online"].b() ? 1.0f : 0.0f);
+  vec[9] = quantize(req.is_online ? 1.0f : 0.0f);
 
-  vec[10] = quantize(j["terminal"]["card_present"].b() ? 1.0f : 0.0f);
+  vec[10] = quantize(req.card_present ? 1.0f : 0.0f);
 
-  string merchant_id = j["merchant"]["id"].s();
-  const auto& known = j["customer"]["known_merchants"];
-  bool is_unknown =
-      find(known.begin(), known.end(), merchant_id) == known.end();
+  bool is_unknown = find(req.known_merchants.begin(), req.known_merchants.end(),
+                         req.merchant_id) == req.known_merchants.end();
   vec[11] = quantize(is_unknown ? 1.0f : 0.0f);
 
-  string mcc_str = j["merchant"]["mcc"].s();
+  const string& mcc_str = req.mcc_str;
   int mcc_int = 0;
   for (char c : mcc_str) {
     if (c >= '0' && c <= '9')
@@ -140,7 +97,7 @@ vector<int16_t> VectorSearch::transaction_to_vector(
     vec[12] = quantize(0.5f);
   }
 
-  float merchant_avg = j["merchant"]["avg_amount"].d();
+  float merchant_avg = req.merchant_avg;
   vec[13] = quantize(merchant_avg * inv_max_merchant_avg);
 
   return vec;
@@ -159,8 +116,8 @@ vector<pair<int32_t, uint32_t>> VectorSearch::search_neighbors(
   return ivf.search(vec, top_k);
 }
 
-pair<bool, float> VectorSearch::is_approved(const crow::json::rvalue& j) {
-  vector<int16_t> vec = transaction_to_vector(j);
+pair<bool, float> VectorSearch::is_approved(const ParsedRequest& req) {
+  vector<int16_t> vec = transaction_to_vector(req);
   vector<pair<int32_t, uint32_t>> weights = search_neighbors(vec, 5);
   float score = compute_score(weights);
   return {score < threshold, score};

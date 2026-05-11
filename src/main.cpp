@@ -1,14 +1,27 @@
+#include <sys/stat.h>
+#include <uWebSockets/App.h>
+#include <unistd.h>
+
 #include <chrono>
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 
-#include "crow.h"
+#include "utils.hpp"
 #include "vector_search.hpp"
 
 using namespace std;
+
+static const char* responses[6] = {"{\"approved\":true,\"fraud_score\":0.0}",
+                                   "{\"approved\":true,\"fraud_score\":0.2}",
+                                   "{\"approved\":true,\"fraud_score\":0.4}",
+                                   "{\"approved\":false,\"fraud_score\":0.6}",
+                                   "{\"approved\":false,\"fraud_score\":0.8}",
+                                   "{\"approved\":false,\"fraud_score\":1.0}"};
 
 void build_index() {
   VectorSearch vector_search;
@@ -22,7 +35,7 @@ void build_index() {
          << (vector_search.ivf.bucket_starts[i + 1] -
              vector_search.ivf.bucket_starts[i])
          << " vectors" << endl;
-};
+}
 
 void run_test() {
   VectorSearch vector_search;
@@ -31,31 +44,32 @@ void run_test() {
   ifstream file("test-data.json");
   if (!file) {
     return;
-  };
+  }
 
-  stringstream buffer;
-  buffer << file.rdbuf();
-  string json_str = buffer.str();
+  nlohmann::json data;
+  file >> data;
 
-  auto data = crow::json::load(json_str);
   auto entries = data["entries"];
   vector<int> times;
-
-  // Warmup
-  for (int i = 0; i < 1000; i++) {
-    vector_search.is_approved(entries[i % entries.size()]["request"]);
-  }
 
   int t = 0;
   int c = 0;
   int n = entries.size();
+
   for (int i = 0; i < n; i++) {
-    auto request = entries[i]["request"];
-    auto expected_approved = entries[i]["expected_approved"].b();
-    auto expected_fraud_score = entries[i]["expected_fraud_score"].d();
+    nlohmann::json request_json = entries[i]["request"];
+    string request_str = request_json.dump();
+
+    bool expected_approved = entries[i]["expected_approved"];
+    double expected_fraud_score = entries[i]["expected_fraud_score"];
+
+    ParsedRequest parsed = parse_request(request_str);
+    if (!parsed.valid) {
+      break;
+    }
 
     auto begin = chrono::high_resolution_clock::now();
-    auto [approved, score] = vector_search.is_approved(request);
+    auto [approved, score] = vector_search.is_approved(parsed);
     auto end = chrono::high_resolution_clock::now();
     auto elapsed = chrono::duration_cast<chrono::microseconds>(end - begin);
 
@@ -85,39 +99,76 @@ void run_test() {
   cout << "Result: " << c << "/" << n << endl;
   cout << "AVG: " << avg << " microseconds" << endl;
   cout << "P99: " << p99 << " microseconds" << endl;
-};
+}
+
+void warmup(VectorSearch& vector_search) {
+  string j = R"({
+        "id": "dummy",
+        "transaction": {"amount": 100.0, "installments": 1, "requested_at": "2026-05-10T12:00:00Z"},
+        "customer": {"avg_amount": 100.0, "tx_count_24h": 1, "known_merchants": []},
+        "merchant": {"id": "M-1", "mcc": "0000", "avg_amount": 100.0},
+        "terminal": {"is_online": true, "card_present": true, "km_from_home": 0.0},
+        "last_transaction": {"timestamp": "2026-05-10T11:00:00Z", "km_from_current": 0.0}
+    })";
+
+  ParsedRequest parsed = parse_request(j);
+  if (!parsed.valid) {
+    return;
+  }
+
+  for (int i = 0; i < 1000; i++) {
+    vector_search.is_approved(parsed);
+  }
+}
 
 int main(int argc, char* argv[]) {
   if (argc > 1 && strcmp(argv[1], "build_index") == 0) {
     build_index();
     return 0;
-  };
+  }
 
   if (argc > 1 && strcmp(argv[1], "run_test") == 0) {
     run_test();
     return 0;
-  };
+  }
 
   VectorSearch vector_search;
   vector_search.load_index();
+  warmup(vector_search);
 
-  crow::SimpleApp app;
+  uWS::App app;
 
-  CROW_ROUTE(app, "/ready")([]() { return "ready"; });
+  app.get("/ready", [](auto* res, auto* req) { res->end("ready"); });
 
-  CROW_ROUTE(app, "/fraud-score")
-      .methods(crow::HTTPMethod::POST)(
-          [&vector_search](const crow::request& req) {
-            auto body = crow::json::load(req.body);
-            if (!body) return crow::response(400, "Invalid JSON");
-            auto [approved, score] = vector_search.is_approved(body);
-            crow::json::wvalue response;
-            response["approved"] = approved;
-            response["fraud_score"] = score;
-            return crow::response{response};
-          });
+  app.post("/fraud-score", [&vector_search](auto* res, auto* req) {
+    res->onData([res, &vector_search](string_view chunk, bool isLast) {
+      if (isLast) {
+        ParsedRequest parsed = parse_request(chunk);
+        auto [approved, score] = vector_search.is_approved(parsed);
+        res->writeHeader("Content-Type", "application/json")
+            ->end(responses[static_cast<int>(score * 5 + 0.5)]);
+      }
+    });
+  });
 
-  app.port(8080).multithreaded().run();
+  const char* socket_path = getenv("SOCKET_PATH");
+
+  if (!socket_path) {
+    socket_path = "/sockets/api.sock";
+  }
+
+  unlink(socket_path);
+
+  app.listen(socket_path, 0,
+             [socket_path](auto* listen_socket) {
+               if (listen_socket) {
+                 chmod(socket_path, 0777);
+                 cout << "Listening: " << socket_path << endl;
+               } else {
+                 cout << "Failed: " << socket_path << endl;
+               }
+             })
+      .run();
 
   return 0;
-};
+}

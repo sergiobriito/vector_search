@@ -1,0 +1,32 @@
+CXX = g++
+
+CXXFLAGS = -Iinclude \
+    -Iinclude/uWebSockets \
+    -Iinclude/uSockets \
+    -std=c++17 \
+    -Wall \
+    -O3 \
+    -mavx2 \
+    -fopenmp \
+    -ffast-math \
+    -pthread \
+    -DJSON_USE_LEGACY_STRTOLL
+
+LDFLAGS = \
+    -fopenmp \
+    lib/libuSockets.a \
+    -lssl \
+    -lcrypto \
+    -lz \
+    -lpthread
+
+SOURCES = $(wildcard src/*.cpp)
+
+build:
+	$(CXX) $(CXXFLAGS) src/*.cpp -o main $(LDFLAGS)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+clean:
+	rm -f main *.o src/*.o
