@@ -1,15 +1,17 @@
-FROM rustlang/rust:nightly AS builder
+FROM rust:1.75-slim as builder
+
 WORKDIR /app
 
-COPY load_balancer/Cargo.toml* ./
-COPY load_balancer/src ./src
+RUN apt-get update && apt-get install -y pkg-config libssl-dev
+
+COPY load_balancer/ ./
 
 RUN cargo build --release
 
-FROM ubuntu:24.04
-RUN apt-get update && apt-get install -y ca-certificates liburing2 && rm -rf /var/lib/apt/lists/*
+FROM debian:bookworm-slim
 
-COPY --from=builder /app/target/release/load_balancer /usr/local/bin/
+RUN apt-get update && apt-get install -y ca-certificates
 
-EXPOSE 9999
-CMD ["load_balancer"]
+COPY --from=builder /app/target/release/lb-uring /usr/local/bin/lb-uring
+
+CMD ["lb-uring"]

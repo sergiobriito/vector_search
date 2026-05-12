@@ -1,81 +1,76 @@
-use glommio::net::{TcpListener, TcpStream};
-use glommio::{LocalExecutorBuilder, Placement};
-use futures_lite::{io::copy, AsyncReadExt, AsyncWriteExt}; // AsyncReadExt is required for .split()
-use std::sync::Arc;
+use tokio_uring::net::{TcpListener, TcpStream, UnixStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
-struct BackendPool {
-    backends: Vec<String>,
-    idx: AtomicUsize,
-}
+const API1: &str = "/sockets/api1.sock";
+const API2: &str = "/sockets/api2.sock";
 
-impl BackendPool {
-    fn new(backends: Vec<String>) -> Self {
-        Self {
-            backends,
-            idx: AtomicUsize::new(0),
-        }
-    }
-
-    fn next(&self) -> &str {
-        let i = self.idx.fetch_add(1, Ordering::Relaxed);
-        &self.backends[i % self.backends.len()]
-    }
-}
-
-async fn handle_client(client: TcpStream, pool: Arc<BackendPool>) {
-    let backend_addr = pool.next().to_string();
-
-    let backend = match TcpStream::connect(&backend_addr).await {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-
-    // Correct way to bifurcate the stream in Glommio 0.9.0
-    // This splits the stream into an owned Read half and an owned Write half
-    let (mut client_reader, mut client_writer) = client.split();
-    let (mut backend_reader, mut backend_writer) = backend.split();
-
-    // Task 1: Client -> Backend (Requests)
-    let t1 = glommio::spawn_local(async move {
-        let _ = copy(&mut client_reader, &mut backend_writer).await;
-        let _ = backend_writer.close().await;
-    });
-
-    // Task 2: Backend -> Client (Responses)
-    let t2 = glommio::spawn_local(async move {
-        let _ = copy(&mut backend_reader, &mut client_writer).await;
-        let _ = client_writer.close().await;
-    });
-
-    // Join the tasks to keep the connection alive until both finish
-    let _ = futures_lite::future::zip(t1, t2).await;
+struct State {
+    counter: AtomicUsize,
 }
 
 fn main() {
-    // 1 CPU unit limit: Placement::Unbound allows the OS to schedule 
-    // the single thread efficiently. 
-    // ring_depth(128) keeps the memory footprint very low.
-    let executor = LocalExecutorBuilder::new(Placement::Unbound)
-        .ring_depth(128)
-        .spawn(|| async move {
-            let addr = "0.0.0.0:8080";
-            let listener = TcpListener::bind(addr).expect("Bind failed");
-            println!("Glommio LB active on {}", addr);
+    tokio_uring::start(async {
+        println!("Listening at 0.0.0.0:9999...");
 
-            let pool = Arc::new(BackendPool::new(vec![
-                "backend1:8001".into(),
-                "backend2:8002".into(),
-            ]));
+        let listener = TcpListener::bind("0.0.0.0:9999".parse().unwrap())
+            .expect("Error");
 
-            loop {
-                if let Ok(client) = listener.accept().await {
-                    let pool = pool.clone();
-                    glommio::spawn_local(handle_client(client, pool)).detach();
+        let state = Arc::new(State {
+            counter: AtomicUsize::new(0),
+        });
+
+        loop {
+            let (client, _) = listener.accept().await.expect("Error");
+            
+            let state_clone = state.clone();
+            let i = state_clone.counter.fetch_add(1, Ordering::Relaxed);
+            let target_path = if i & 1 == 0 { API1 } else { API2 };
+
+            tokio_uring::spawn(async move {
+                if let Err(e) = handle(client, target_path).await {
+                    eprintln!("Error: {:?}", e);
                 }
-            }
-        })
-        .expect("Executor failed");
+            });
+        }
+    });
+}
 
-    executor.join().unwrap();
+async fn handle(client: TcpStream, backend_path: &str) -> std::io::Result<()> {
+    let mut buf = vec![0u8; 4096];
+
+    loop {
+        let (read_res, returned_buf) = client.read(buf).await;
+        buf = returned_buf;
+
+        let n = match read_res {
+            Ok(0) => return Ok(()),
+            Ok(n) => n,
+            Err(e) => return Err(e),
+        };
+
+        let backend = match UnixStream::connect(backend_path).await {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("Error {}: {}", backend_path, e);
+                return Err(e);
+            }
+        };
+
+
+        let (write_res, _) = backend.write_all(buf[..n].to_vec()).await;
+        write_res?;
+
+        let (read_back_res, resp_buf) = backend.read(vec![0u8; 4096]).await;
+        let rn = match read_back_res {
+            Ok(n) if n > 0 => n,
+            Ok(_) => return Ok(()),
+            Err(e) => return Err(e),
+        };
+
+        let (client_write_res, _) = client.write_all(resp_buf[..rn].to_vec()).await;
+        client_write_res?;
+        
+    }
 }

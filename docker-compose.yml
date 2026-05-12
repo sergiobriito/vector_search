@@ -8,7 +8,6 @@ services:
     volumes:
       - sockets:/sockets
     cpus: '0.2'
-    cpuset: "0"
     mem_limit: 30M
     security_opt:
       - seccomp:unconfined
@@ -30,7 +29,6 @@ services:
     volumes:
       - sockets:/sockets
     cpus: '0.4'
-    cpuset: "1"
     mem_limit: 160M
     ulimits:
       nofile:
@@ -48,7 +46,6 @@ services:
     volumes:
       - sockets:/sockets
     cpus: '0.4'
-    cpuset: "1"
     mem_limit: 160M
     ulimits:
       nofile:

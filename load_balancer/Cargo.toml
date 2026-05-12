@@ -1,8 +1,9 @@
 [package]
-name = "load_balancer"
+name = "lb-uring"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-glommio = "0.9"
-futures-lite = "2.3"
+tokio-uring = "0.5"
+bytes = "1"
+crossbeam = "0.8"
