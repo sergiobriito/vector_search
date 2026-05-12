@@ -1,15 +1,7 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -O3 -mavx2 -fopenmp -ffast-math -pthread \
-    -Iinclude \
-    -Iinclude/uWebSockets
-
-LDFLAGS = -Llib -fopenmp -luSockets -lssl -lcrypto -lz -lpthread
-
-SRCS = src/ivf.cpp \
-       src/utils.cpp \
-       src/vector_search.cpp \
-       src/main.cpp \
-       include/simdjson.cpp
+CXXFLAGS = -std=c++17 -Wall -O3 -mavx2 -march=haswell -flto -fomit-frame-pointer -fno-plt -fno-semantic-interposition -fno-trapping-math -DNDEBUG -Iinclude -Iinclude/uWebSockets
+LDFLAGS = -Llib -luSockets -lssl -lcrypto -lz -lpthread
+SRCS = src/ivf.cpp src/utils.cpp src/vector_search.cpp src/main.cpp include/simdjson.cpp
 
 build:
 	$(CXX) $(CXXFLAGS) $(SRCS) -o main $(LDFLAGS)

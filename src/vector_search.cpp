@@ -137,7 +137,7 @@ void VectorSearch::create_ivf(const string& filename) {
   auto j = doc.get_array();
 
   size_t total_vectors = 0;
-  for (auto _ : j) {
+  for ([[maybe_unused]] auto elem : j) {
     total_vectors++;
   }
 

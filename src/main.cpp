@@ -1,3 +1,4 @@
+#include <simdjson.h>
 #include <sys/stat.h>
 #include <uWebSockets/App.h>
 #include <unistd.h>
@@ -7,6 +8,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -33,12 +35,13 @@ void warmup(VectorSearch& vector_search) {
         "last_transaction": {"timestamp": "2026-05-10T11:00:00Z", "km_from_current": 0.0}
     })";
 
-  ParsedRequest parsed = parse_request(j);
-  if (!parsed.valid) {
-    return;
-  }
+  j.append(simdjson::SIMDJSON_PADDING, '\0');
+  string_view sv(j.data(), j.size() - simdjson::SIMDJSON_PADDING);
 
-  for (int i = 0; i < 1000; i++) {
+  ParsedRequest parsed = parse_request(sv);
+  if (!parsed.valid) return;
+
+  for (int i = 0; i < 5000; i++) {
     vector_search.is_approved(parsed);
   }
 }
@@ -54,34 +57,37 @@ int main(int argc, char* argv[]) {
 
   app.post("/fraud-score", [&vector_search](auto* res, auto* req) {
     auto body = make_shared<string>();
+    body->reserve(1024);
+
     auto aborted = false;
 
     res->onAborted([&aborted]() { aborted = true; });
 
-    res->onData([res, &vector_search, body, &aborted](string_view chunk,
-                                                      bool isLast) {
-      body->append(chunk.data(), chunk.size());
-      if (isLast && !aborted) {
-        ParsedRequest parsed = parse_request(*body);
-        auto [approved, score] = vector_search.is_approved(parsed);
-        res->writeHeader("Content-Type", "application/json")
-            ->end(responses[max(0, min(5, static_cast<int>(score * 5 + 0.5)))]);
-      }
-    });
+    res->onData(
+        [res, &vector_search, body, &aborted](string_view chunk, bool isLast) {
+          body->append(chunk.data(), chunk.size());
+          if (isLast && !aborted) {
+            ParsedRequest parsed = parse_request(*body);
+            auto [approved, score] = vector_search.is_approved(parsed);
+
+            int index = max(0, min(5, static_cast<int>(score * 5 + 0.5)));
+            res->end(responses[index]);
+          }
+        });
   });
 
   const char* socket_path = getenv("SOCKET_PATH");
-
   if (!socket_path) {
     socket_path = "/sockets/api.sock";
   }
 
   unlink(socket_path);
 
+  mode_t old_mask = umask(0);
+
   app.listen(
       [&](auto* listen_socket) {
         if (listen_socket) {
-          chmod(socket_path, 0777);
           cout << "Listening: " << socket_path << endl;
         } else {
           cerr << "Failed: " << socket_path << endl;
@@ -90,6 +96,9 @@ int main(int argc, char* argv[]) {
       },
       socket_path);
 
+  chmod(socket_path, 0777);
+
+  umask(old_mask);
   app.run();
 
   return 0;

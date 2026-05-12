@@ -1,0 +1,15 @@
+FROM rustlang/rust:nightly AS builder
+WORKDIR /app
+
+COPY load_balancer/Cargo.toml* ./
+COPY load_balancer/src ./src
+
+RUN cargo build --release
+
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y ca-certificates liburing2 && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/load_balancer /usr/local/bin/
+
+EXPOSE 9999
+CMD ["load_balancer"]

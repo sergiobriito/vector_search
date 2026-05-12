@@ -1,0 +1,8 @@
+[package]
+name = "load_balancer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+glommio = "0.9"
+futures-lite = "2.3"

@@ -25,7 +25,6 @@ RUN mkdir -p /app/include && \
 RUN rm -rf /tmp/uWebSockets && \
     git clone --recursive https://github.com/uNetworking/uWebSockets.git /tmp/uWebSockets && \
     cd /tmp/uWebSockets/uSockets && \
-    sed -i 's/-flto//g' Makefile && \
     make clean && make && \
     mkdir -p /app/lib /app/include/uWebSockets && \
     cp uSockets.a /app/lib/libuSockets.a && \
